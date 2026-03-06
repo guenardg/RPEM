@@ -42,13 +42,7 @@ jobs:
       - name: Install libraries for macOS
         if: runner.os == 'macOS'
         run: |
-          brew install udunits geos gdal
-
-      - name: Set up gettext for macOS
-        if: runner.os == 'macOS'
-        run: |
-          echo "LDFLAGS=-L$(brew --prefix gettext)/lib" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I$(brew --prefix gettext)/include" >> $GITHUB_ENV
+          Rscript -e "install.packages('expm', repos = 'https://packagemanager.posit.co/cran/latest', type = 'binary')"
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
