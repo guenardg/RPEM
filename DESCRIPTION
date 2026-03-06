@@ -9,7 +9,7 @@ Authors@R: c(
       given = "Guillaume",
       family = "Guénard",
       role = c("aut","cre"),
-      email = "guillaume.guenard@umontreal.ca",
+      email = "guillaume.guenard@gmail.com",
       comment = c(ORCID = "0000-0003-0761-3072")),
     person(
       given = "Pierre",
@@ -27,7 +27,7 @@ Authors@R: c(
 Description: Generation of reticulated or non-reticulated Phylogenetic
   Eigenvector Maps (PEM) and phylogenetic signal modelling tools.
 Depends:
-  R (>= 3.5.0),
+  R (>= 4.1.0),
   ape,
   magrittr,
   sf
