@@ -43,6 +43,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           Rscript -e "install.packages('expm', repos = 'https://packagemanager.posit.co/cran/latest', type = 'binary')"
+          brew install udunits geos gdal
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
