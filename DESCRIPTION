@@ -1,0 +1,48 @@
+Package: RPEM
+Type: Package
+Encoding: UTF-8
+Title: Reticulated Phylogenetic Eigenvector Maps
+Version: 1.0-1
+Date: 2026-03-06
+Authors@R: c(
+    person(
+      given = "Guillaume",
+      family = "Guénard",
+      role = c("aut","cre"),
+      email = "guillaume.guenard@umontreal.ca",
+      comment = c(ORCID = "0000-0003-0761-3072")),
+    person(
+      given = "Pierre",
+      family = "Legendre",
+      role = "ctb",
+      email = "pierre.legendre@umontreal.ca",
+      comment = c(ORCID = "0000-0002-3838-3305")),
+    person(
+      given = "Vladimir",
+      family = "Makarenkov",
+      role = "ctb",
+      email = "makarenkov.vladimir@uqam.ca"
+    )
+  )
+Description: Generation of reticulated or non-reticulated Phylogenetic
+  Eigenvector Maps (PEM) and phylogenetic signal modelling tools.
+Depends:
+  R (>= 3.5.0),
+  ape,
+  magrittr,
+  sf
+Imports:
+  expm,
+  MASS
+Suggests:
+  caper,
+  devtools,
+  knitr,
+  phangorn,
+  xfun
+License: GPL-3
+LazyLoad: yes
+NeedsCompilation: yes
+VignetteBuilder: knitr
+Repository: CRAN
+RoxygenNote: 7.3.3

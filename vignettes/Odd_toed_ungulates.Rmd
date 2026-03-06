@@ -1,0 +1,623 @@
+---
+title: "The Odd-Toed Ungulates Example"
+author: "Guillaume Guénard"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 4
+bibliography: ../inst/bib/Odd_toad_ungulates.bib
+vignette: >
+  %\VignetteIndexEntry{The Odd-Toed Ungulates Example}
+  %\VignetteEngine{knitr::rmarkdown}
+  \usepackage[utf8]{inputenc}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+hook_output <- knitr::knit_hooks$get("output")
+knitr::knit_hooks$set(output = function(x, options) {
+  if (!is.null(n <- options$out.lines)) {
+    x <- xfun::split_lines(x)
+    if (length(x) > n) {
+      # truncate the output
+      x <- c(head(x, n), "....\n")
+    }
+    x <- paste(x, collapse = "\n")
+  }
+  hook_output(x, options)
+})
+##
+### Load packages here:
+##
+### Figure counter:
+(
+  function() {
+    log <- list(
+      labels = character(),
+      captions = character()
+    )
+    list(
+      register = function(label, caption) {
+        log$labels <<- c(log$labels, label)
+        log$captions <<- c(log$captions, caption)
+        invisible(NULL)
+      },
+      getNumber = function(label) {
+        which(log$labels == label)
+      },
+      getCaption = function(label) {
+        a <- which(log$labels == label)
+        cap <- log$captions[a]
+        cat(sprintf("Figure %d. %s\n\n---\n",a,cap))
+        invisible(NULL)
+      }
+    )
+  }
+)() -> figCounter
+
+(
+  function() {
+    log <- list(
+      labels = character(),
+      captions = character()
+    )
+    list(
+      register = function(label, caption) {
+        log$labels <<- c(log$labels, label)
+        log$captions <<- c(log$captions, caption)
+        invisible(NULL)
+      },
+      getNumber = function(label) {
+        which(log$labels == label)
+      },
+      getCaption = function(label) {
+        a <- which(log$labels == label)
+        cap <- log$captions[a]
+        cat(sprintf("Table %d. %s\n\n---\n",a,cap))
+        invisible(NULL)
+      }
+    )
+  }
+)() -> tabCounter
+```
+
+Package version: `r packageVersion("RPEM")`
+
+
+## Introduction
+
+We prepared adapted version of the odd-toed ungulates (Mammalia: Perissodactyla)
+---originally published by @PurvisRambaut1995 in conjunction with the
+Comparative Analysis by Independent Contrasts (CAIC) software
+[@PurvisRambautCAIC]---which we used for illustrating PEM calculations and
+potential benefits. We began by obtaining the original dataset via the **caper**
+package in R. It includes trait data for 13 species of odd-toed ungulates,
+specifically mean female body mass, mean gestation length, mean neonatal body
+mass, and a binary indicator of territorial behavior.
+
+```{r echo=FALSE}
+tabCounter$register(
+  "GenBankData",
+  paste(
+    "GenBank accession numbers for the mitochondrial DNA sequences used to",
+    "reconstruct the phylogeny of odd-toed ungulates, including two-letter",
+    "species abbreviations.")
+)
+```
+
+All continuous traits were provided in log-transformed form to improve normality
+and facilitate comparisons across orders of magnitude. Although the original
+dataset includes an associated phylogenetic tree, we did not use it. Instead, we
+reconstructed a more up-to-date phylogeny for these species using mitochondrial
+DNA sequences, leveraging the availability of complete or near-complete
+mitogenomes in the National Center for Biotechnology Information (NCBI)
+[GenBank](https://www.ncbi.nlm.nih.gov/genbank/) database
+(Table `r tabCounter$getNumber("GenBankData") `).
+
+---
+
+```{r, echo=FALSE, results='asis'}
+tabCounter$getCaption("GenBankData")
+```
+
+| Species                     | Accession   | Abbreviation |
+| :-------------------------  | :--------:  | -----------: |
+| _Dicerorhinus sumatrensis_  | NC_012684.1 | DS           |
+| _Rhinoceros sondaicus_      | NC_012683.1 | RS           |
+| _Rhinoceros unicornis_      | NC_001779.1 | RU           |
+| _Diceros bicornis_          | NC_012682.1 | DB           |
+| _Ceratotherium simum_       | NC_001808.1 | CS           |
+| _Tapirus terrestris_        | NC_053962.1 | TT           |
+| _Tapirus pinchaque_         | OQ420428.1  | TP           |
+| _Tapirus indicus_           | NC_023838.1 | TI           |
+| _Equus grevyi_              | NC_020432.2 | EG           |
+| _Equus burchelli_           | NC_044858.1 | EB           |
+| _Equus zebra_               | NC_020476.1 | EZ           |
+| _Equus africanus_           | KX669267.1  | EA           |
+| _Equus hemionus_            | NC_016061.1 | EH           |
+| _Bos taurus<sup>1</sup>_    | NC_006853.1 |              |
+
+1. The domestic ox, _Bos taurus_ was used as an outgroup to root the tree.
+
+---
+
+The aligned DNA sequences were concatenated, excluding the mitochondrial control
+region and origin of replication. The resulting alignment was used to compute a
+pairwise DNA distance matrix under the F81 model [@Felsenstein1981] using the
+`dist.dna()` function from the **ape** package in R [@Paradis2004].
+
+From this distance matrix, a minimum evolution (ME) tree was inferred using the
+`fastme.ols()` function, which seeks to minimize the sum of squared differences
+between the observed DNA distances and the patristic distances (i.e., path
+lengths along the tree) between the tips [@Lefort2015].
+
+Reticulations were added sequentially to the initial tree, guided by the same
+minimum evolution criterion used during tree inference. At each step, all
+possible pairs of edges were evaluated as candidate connections for
+cross-linking. For each candidate pair, the optimal positions of the
+reticulation nodes---i.e., the points of entry and exit along the respective edges---and the length of the reticulation edge were jointly estimated using the
+L-BFGS-B optimization algorithm [@Byrd1995], which supports box constraints.
+This ensured that the reticulation nodes remained within the bounds of their
+host edges. The length of the reticulation edge was constrained to the interval
+[0, 1] to maintain biological plausibility and numerical stability.
+
+Among all evaluated candidates, the reticulation that yielded the smallest sum
+of squared differences between the observed DNA distances and the (mean)
+patristic distances in the graph was selected and added. The resulting
+reticulated phylogenetic graph was then used as the starting point for the next
+iteration. The process was stopped after ten reticulations had been added,
+providing a plausible, albeit illustrative, example of a phylogenetic network.
+
+The dataset---including the F81 DNA distance matrix, the initial phylogenetic
+tree, a table detailing the estimated reticulation events, and trait data for
+the 13 odd-toed ungulates---is distributed with the RPEM package as an external
+data object. It can be loaded into the R workspace using the following command:
+
+```{r message=FALSE}
+## Load RPEM
+library(RPEM)
+
+## Loading the data:
+system.file(
+  "extdata/Perissodactyla.rds",
+  package = "RPEM"
+) %>%
+  readRDS -> perisso
+```
+
+
+## Calculations
+
+In this example, we aim to predict the trait values available in the trait data
+using PEMs derived from $11$ distinct phylogenetic structures: the initial
+phylogenetic tree and each of the ten phylogenetic graphs obtained by
+sequentially adding reticulation events. This approach enables us to evaluate
+how incorporating reticulate evolution affects trait prediction accuracy and
+model performance.
+
+```{r echo=FALSE}
+figCounter$register(
+  "phylogeny",
+  paste(
+    "The 11 phylogenetic graphs estimated in this study: the initial tree",
+    "(Net0) and ten reticulation networks (Net1--Net10). Networks Net1 to",
+    "Net10 include an increasing number of reticulation events, ranging from",
+    "1 to 10. The sum of squared deviations between the F81 DNA distances and",
+    "the mean patristic distances in each graph are shown in parentheses",
+    "after the graph’s name."
+  )
+)
+```
+
+The minimum evolution tree is first converted into a graph object and stored in a list. Subsequently, cross-links are added sequentially—based on the inferred reticulation events–to generate a series of candidate phylogenetic graphs, as illustrated below (Figure  `r figCounter$getNumber("phylogeny")`):
+
+```{r}
+net <- list(Net0=as.graph(perisso$phy))
+
+for(i in 2L:nrow(perisso$ret)) {
+  crosslink(
+    net[[i - 1L]],
+    link = data.frame(
+      length = perisso$ret[i,"length"],
+      from = perisso$ret[i,"from"],
+      loc_from = perisso$ret[i,"loc_from"],
+      to = perisso$ret[i,"to"],
+      loc_to = perisso$ret[i,"loc_to"],
+      row.names = sprintf("Ret%d", i - 1L)
+    )
+  ) -> net[[sprintf("Net%d", i - 1L)]]
+}
+```
+
+---
+
+```{r, echo=FALSE, fig.width=10, fig.height=10}
+par(mfrow=c(4,3), mar=c(1,1,1,1))
+
+c(`Dicerorhinus sumatrensis` = "DS", `Rhinoceros sondaicus` = "RS",
+  `Rhinoceros unicornis` ="RU", `Diceros bicornis` = "DB",
+  `Ceratotherium simum` = "CS", `Tapirus terrestris`= "TT",
+  `Tapirus pinchaque`= "TP", `Tapirus indicus` = "TI", `Equus grevyi` = "EG",
+  `Equus burchelli`= "EB", `Equus zebra`= "EZ", `Equus africanus` = "EA",
+  `Equus hemionus` = "EH") -> abbrev
+
+plotgr0 <- function(x) {
+  rownames(x)[x$species] <- abbrev[rownames(x)[x$species]]
+  x
+}
+
+for(i in names(net))
+  plotgr0(net[[i]]) %>%
+    plot(xpd=TRUE, cex.lab=0.7, cex.min=3.5,
+         edge.color=list("black", "black"),
+         main=sprintf("%s (%f)",i, perisso$ret[i,"SSD"]))
+```
+
+```{r, echo=FALSE, results='asis'}
+figCounter$getCaption("phylogeny")
+```
+
+---
+
+Phylogenetic Eigenvector Map calculations are described in detail by
+@Guenard2013 and are only briefly summarized here. A PEM is derived from the
+influence matrix, a rectangular binary matrix of dimensions $V\timesE$, where
+$V$ denotes the set of vertices and $E$ the set of edges in the phylogenetic
+graph. Each entry in the matrix is $1$ if a given vertex is located after a
+specific edge along the graph’s paths, and $0$ otherwise. This matrix can be
+computed using the function `InflMat()`.
+
+Each column of the influence matrix is assigned a weight $w_i$, calculated based
+on the phylogenetic distance $d_i$ associated with the corresponding edge. The
+weighting function proposed by @Guenard2013 is:
+
+$$
+w_i = \psi d_i^\frac{1-a}{2},
+$$
+
+where the selection parameter a controls the degree of deviation from neutral
+trait evolution and takes values between $0$ (indicating completely neutral
+evolution) and $1$ (indicating strongly non-neutral evolution). The parameter
+$\psi$ represents a scaling factor for the overall phylogenetic variance and is
+typically set to positive values centered around $1$.
+
+After weighting the columns, the rows corresponding to extant species are
+extracted according to their associated vertex. The resulting matrix is
+column-centered to zero mean and decomposed via singular value decomposition
+(SVD) to identify its principal axes of phylogenetic variation.
+
+The left singular vectors obtained from the SVD serve as eigenvector maps that
+capture the major patterns of phylogenetic variation. These vectors are commonly
+used as predictors in linear models, such as multiple regression, to account for
+non-independence due to shared evolutionary history. The right singular vectors,
+when scaled by the inverse of the corresponding singular values, form a
+projection matrix that enables the computation of phylogenetic scores at any
+specified location within the phylogenetic graph, including along edges or at
+reticulation nodes.
+
+In RPEM, PEM calculation is performed using the function `PEM()`, which requires
+at minimum a phylogenetic graph as input. A basic usage example is shown below:
+
+```{r}
+PEM(net$Net0)
+```
+
+
+The default call to `PEM()` computes the PEM under the assumption of neutral
+trait evolution. Users can modify this assumption by specifying different levels
+of selection through the `a` argument, which accepts logit-transformed values of
+the selection parameter. Consequently, the default corresponds to `a = -Inf`,
+representing the limit of purely neutral evolution.
+
+To estimate the value of the selection parameter `a` from empirical data, RPEM
+provides the `evolution.model()` function, which fits the parameters of the
+weighting function using observed trait data within the PEM framework. This
+function is applied as follows to each of the phylogenetic graphs in the series:
+
+```{r}
+## Lists storing the eigenvectors (PEM) and optimization information
+pem <- list()
+opt <- list()
+
+for(i in names(net)) {
+  pem[[i]] <- PEM(net[[i]], a = 0)
+  opt[[i]] <- evolution.model(pem[[i]], y=perisso$trait$log.female.wt)
+}
+
+## The 'a' parameter estimated for each graph in Fig. 1
+unlist(lapply(opt, function(x) invlogit(x$par$a)))
+```
+
+The eigenvectors derived from a PEM can be extracted using the functions
+`as.matrix.PEM()` or `as.data.frame.PEM()`, which return the results in matrix
+or data frame format, respectively. These eigenvectors can then be used as
+predictors in other modeling frameworks to estimate trait values or account for
+phylogenetic signal in statistical analyses.
+
+Alternatively, the helper function `pemlm()` provides a streamlined approach for
+modeling with PEM eigenvectors. In its current implementation, this function
+facilitates the selection of a subset of eigenvectors based on minimizing the
+Akaike information criterion corrected for small sample sizes [AICc,
+@Burnham2002; @Guenard2013].
+
+We illustrate the typical workflow of `pemlm()` by predicting the missing
+(log-transformed) gestation length for the mountain tapir (_Tapirus pinchaque_;
+TP) using the PEM eigenvectors derived from the initial phylogenetic tree
+(Net0), together with female and neonatal weights as auxiliary predictor
+variables. The workflow begins by determining the graph location of the mountain
+tapir using the `locate()` function, preparing a suitable dataset with the
+helper function `model.data()`, and then calculating and optimizing the PEM as
+follows:
+
+```{r}
+## Calculate the graph location and residual graph
+train <- locate(net$Net0, "Tapirus pinchaque")
+
+## Prepare the data for evolution.model()
+model.data(
+    formula = log.gestation.length~log.female.wt+log.neonatal.wt,
+    data = perisso$trait
+  ) -> mdat
+
+## Calculate the (raw) PEM with a finite value for argument `a`
+pem.train <- PEM(train$x, a = 0)
+
+## Optimize the PEM for the data set, excluding focal species TP
+evolution.model(
+    object = pem.train,
+    y = mdat$y[names(mdat$y) != "Tapirus pinchaque"],
+    x = mdat$x[rownames(mdat$x) != "Tapirus pinchaque",]
+  ) -> opt
+```
+
+Using the optimized PEM thus obtained, the `pemlm()` function is called to fit
+an initial model, which is then refined by the embedded `$forward()` method
+through the sequential addition of PEM eigenvectors as follows:
+
+```{r}
+## Initiate the linear model
+pemlm(
+  formula = log.gestation.length~log.female.wt+log.neonatal.wt,
+  data = perisso$trait %>% .[rownames(.) != "Tapirus pinchaque",],
+  pem = pem.train
+) -> lm1
+
+## Add the eigenvectors to the model, returns the indices of the eigenvectors
+## selected in the regression model
+lm1$forward()
+```
+
+A summary of the resulting model can be obtained using the `summary()` method,
+or an ANOVA table can be calculated using the `anova()` method as follows:
+
+```{r}
+## Calculate the summary
+summary(lm1)
+
+## Calculate the ANOVA table
+anova(lm1)
+```
+
+Finally, the predicted gestation length is obtained using method `predict()` as
+follows:
+
+```{r}
+## Predict the gestation length for the Mountain tapir
+predict(
+  object = lm1,
+  newdata = perisso$trait["Tapirus pinchaque",],
+  newloc = train$location
+) -> prd
+```
+
+```{r, echo=FALSE, cache=TRUE}
+runExample <- function(k) {
+  
+  train <- locate(net[[k]], "Tapirus pinchaque")
+  
+  model.data(
+    formula = log.gestation.length~log.female.wt+log.neonatal.wt,
+    data = perisso$trait
+  ) -> mdat
+  
+  pem.train <- PEM(train$x, a = 0)
+  
+  evolution.model(
+    object = pem.train,
+    y = mdat$y[names(mdat$y) != "Tapirus pinchaque"],
+    x = mdat$x[rownames(mdat$x) != "Tapirus pinchaque",]
+  ) -> opt
+  
+  pemlm(
+    formula = log.gestation.length~log.female.wt+log.neonatal.wt,
+    data = perisso$trait %>% .[rownames(.) != "Tapirus pinchaque",],
+    pem = pem.train
+  ) -> lm1
+  
+  lm1$forward()
+  ## summary(lm1)
+  ## anova(lm1)
+  
+  predict(
+    object = lm1,
+    newdata = perisso$trait["Tapirus pinchaque",],
+    newloc = train$location
+  ) -> prd
+  
+  perisso$trait["Tapirus pinchaque","log.gestation.length"] <- prd
+  
+  ## Cross-validation:
+  data.frame(
+    observed = perisso$trait$log.neonatal.wt,
+    auxiliary = NA,
+    predictions = NA,
+    lower = NA,
+    upper = NA,
+    row.names = rownames(perisso$trait)
+  ) -> perisso.pred
+  
+  model.data(
+    formula = log.neonatal.wt~log.female.wt+log.gestation.length,
+    data = perisso$trait
+  ) -> mdat
+  
+  ## i=1L
+  for(i in 1L:nrow(perisso.pred)) {
+    
+    locate(
+      x = net[[k]],
+      target = rownames(perisso.pred)[i]
+    ) -> train
+    
+    pem.train <- PEM(train$x, a = 0)
+    
+    evolution.model(
+      object = pem.train,
+      y = mdat$y[-i],
+      x = mdat$x[-i,]
+    ) -> opt
+    
+    pemlm(
+      formula = log.neonatal.wt~log.female.wt+log.gestation.length,
+      data = perisso$trait[-i,],
+      pem = pem.train
+    ) -> lm_cv
+    
+    predict(
+      lm_cv$auxModel,
+      perisso$trait[i,]
+    ) -> perisso.pred[i,2L]
+    
+    lm_cv$forward()
+    
+    predict(
+      object = lm_cv,
+      newdata = perisso$trait[i,],
+      newloc = train$location,
+      interval = "prediction"
+    ) -> perisso.pred[i,3L:5L]
+  }
+  
+  perisso.pred
+}
+
+expl <- list()
+psq <- c()
+for(i in 1L:length(net)) {
+  expl[[names(net)[i]]] <- runExample(i)
+  expl[[i]] %>%
+    {Psquare(.$observed, .$predictions)} -> psq[names(net)[i]]
+}
+```
+
+```{r echo=FALSE}
+figCounter$register(
+  "psquare",
+  paste(
+    "Observed and predicted values of neonatal body mass for 13 odd-toed",
+    "ungulate species across 11 phylogenetic models, with corresponding",
+    "prediction coefficients shown in the lower right corner. Neonatal body",
+    "mass was predicted using female body mass, gestation period, and",
+    "phylogenetic eigenvectors derived from each of the phylogenetic graphs",
+    "(labeled Net0--Net10). The best predictions are obtained from Net5, the",
+    "model derived after adding five reticulations to the initial tree."
+  )
+)
+```
+
+The observed log-transformed gestation length for the mountain tapir is $2.61$
+($\approx \,406\,\mathrm{days}$). Applying the same predictive workflow to the initial tree (Net0) and each of the ten reticulated networks (Net1--Net10)
+enables us to evaluate how the inclusion of reticulation events influences trait
+prediction accuracy (Figure  `r figCounter$getNumber("psquare")`).
+
+---
+
+```{r, echo=FALSE, fig.width=10, fig.height=7}
+par(mfrow=c(3,4), mar=c(5.1,5.1,0.1,0.1))
+
+rng <- sapply(expl, function(x) range(10^(x - 3)))
+rng <- c(min(rng[1L,]),max(rng[2L,]))
+
+log2kg <- function(x) 10^(x - 3)
+
+## i="Net0"
+for(i in names(net)) {
+  plot(
+    NULL, xlim = rng, ylim = rng, xlab = "Observed (kg)",
+    ylab = "Predicted (kg)", asp=1, log="xy", las=2
+  )
+  arrows(x0=log2kg(expl[[i]]$observed), x1=log2kg(expl[[i]]$observed),
+         y0=log2kg(expl[[i]]$lower), y1=log2kg(expl[[i]]$upper), angle=90,
+         code=3, length=0.025)
+  points(x=log2kg(expl[[i]]$observed), y=log2kg(expl[[i]]$predictions),
+         pch=21L, bg="black")
+  text(x=3, y=200, labels=parse(text=sprintf("bold(%s)",i)), adj=0, cex=1.25)
+  text(
+    x = 3,
+    y = 100,
+    labels = parse(text=sprintf("paste(italic(P)^2,\" = \", %0.3f)",psq[i])),
+    adj = 0,
+    cex=1.25
+  )
+  abline(0,1)
+}
+## main = sprintf("%s (%0.3f)", i, psq[i])
+
+
+par(mar=c(5.1,5.1,1,0.1))
+barplot(psq, names.arg=names(net), las=2, ylim=c(0,1.05), space = 0.1,
+        ylab=expression(paste("Prediction coefficient (",italic(P^2),")")))
+wh <- which.max(psq)
+text(x=1.1*(wh - 0.5), y=psq[wh] + 0.075, label="*", cex=3, xpd=FALSE)
+```
+
+```{r, echo=FALSE, results='asis'}
+figCounter$getCaption("psquare")
+```
+
+---
+
+
+## Results
+
+The prediction coefficients ranged from `r round(min(psq),3)` to
+`r round(max(psq),3)`, with the best predictions obtained from the PEM
+eigenvectors associated with the five-reticulation graph (Net5) and the worst
+predictions obtained using the initial tree (Net0).
+
+
+## Conclusion
+
+This vignette demonstrates the application of Phylogenetic Eigenvector Maps
+(PEMs) within the RPEM package to model and predict trait evolution in a
+real-world phylogenetic context—specifically, among odd-toed ungulates
+(Perissodactyla). By reconstructing an updated phylogeny from mitochondrial DNA
+sequences retrieved from GenBank and progressively incorporating reticulation
+events into the evolutionary model, we illustrate how accounting for
+non-tree-like processes can improve the accuracy of comparative analyses.
+
+Our results show that trait prediction performance, measured by the
+cross-validated prediction coefficient $P^2$, varies significantly across
+different phylogenetic structures. The highest predictive accuracy was achieved
+using a reticulated network with five lateral evolutionary events (Net5),
+outperforming both the original tree and other network configurations. This
+suggests that, in this system, modeling gene flow or hybridization---even if
+only implicitly through added reticulations—leads to more biologically realistic
+representations of evolutionary history and enhances downstream inference.
+
+Importantly, the workflow implemented here---from sequence-based phylogeny
+reconstruction, through network augmentation, to PEM-based
+prediction---highlights the flexibility and integrative power of the RPEM
+framework. It enables users to move beyond strictly bifurcating trees and
+explore the impact of reticulate evolution on trait dynamics, all within a
+statistically rigorous and computationally efficient environment.
+
+The dataset and code presented here serve as a reproducible example for
+researchers interested in integrating genomic data, phylogenetic networks, and
+trait modeling. We encourage further exploration of reticulate evolutionary
+models and their implications for ecological and evolutionary inference using
+the methods and software described.
+
+
+## References

@@ -1,0 +1,1676 @@
+---
+title: "Simulating phylogenetic networks using RPEM"
+author: "Guillaume Guénard"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 4
+bibliography: ../inst/bib/Simulating_phylogenetic_network.bib
+vignette: >
+  %\VignetteIndexEntry{Simulating phylogenetic networks using RPEM}
+  %\VignetteEngine{knitr::rmarkdown}
+  \usepackage[utf8]{inputenc}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+hook_output <- knitr::knit_hooks$get("output")
+knitr::knit_hooks$set(output = function(x, options) {
+  if (!is.null(n <- options$out.lines)) {
+    x <- xfun::split_lines(x)
+    if (length(x) > n) {
+      # truncate the output
+      x <- c(head(x, n), "....\n")
+    }
+    x <- paste(x, collapse = "\n")
+  }
+  hook_output(x, options)
+})
+##
+### Load packages here:
+##
+### Figure counter:
+(
+  function() {
+    log <- list(
+      labels = character(),
+      captions = character()
+    )
+    list(
+      register = function(label, caption) {
+        log$labels <<- c(log$labels, label)
+        log$captions <<- c(log$captions, caption)
+        invisible(NULL)
+      },
+      getNumber = function(label) {
+        which(log$labels == label)
+      },
+      getCaption = function(label) {
+        a <- which(log$labels == label)
+        cap <- log$captions[a]
+        cat(sprintf("Figure %d. %s\n\n---\n",a,cap))
+        invisible(NULL)
+      }
+    )
+  }
+)() -> figCounter
+```
+
+Package version: `r packageVersion("RPEM")`
+
+
+## Introduction
+
+This vignette demonstrates the simulation capabilities of the **RPEM** package
+for generating phylogenetic networks, DNA sequences, and trait data under
+user-defined evolutionary models. These tools are designed to support method
+development, hypothesis testing, and the creation of synthetic training
+datasets--for example, in machine learning applications such as phylogenetic
+graph reconstruction.
+
+### Evolutionary Graphs in RPEM
+
+The **RPEM** package includes functions to simulate evolutionary graphs, which
+can represent a range of evolutionary scenarios:
+
+* Linear sequences (e.g., simple ancestor-descendant chains),
+
+* Bifurcating trees (i.e., phylogenies),
+
+* Reticulated graphs (i.e., phylogenetic networks) that include hybridization or
+  lateral gene transfer events.
+
+Historically, species evolution has been modeled as a tree, under the assumption
+that each species inherits genetic material from a single ancestor. This
+framework supports only **vertical (longitudinal) gene transfer** and does not
+account for **lateral gene transfer (LGT)** processes.
+
+However, the tree model oversimplifies evolutionary history in many groups. It
+ignores important biological phenomena such as:
+
+* **Recombination**: the reshuffling and crossing-over of genetic material,
+
+* **Hybridization**: reproductive events between distantly related lineages,
+
+* **Horizontal exchange of mobile genetic elements**: e.g., plasmids,
+  transposons, or viral insertions.
+
+Representing evolution as a **reticulated graph**--rather than a strictly
+bifurcating tree--allows for the explicit modeling of these lateral processes.
+While this approach increases model complexity, it provides a more realistic
+framework for studying clades where non-tree-like evolution plays a significant
+role.
+
+RPEM enables the simulation of such reticulated evolutionary histories, making
+it a valuable tool for generating biologically plausible synthetic data under
+complex evolutionary scenarios.
+
+In this vignette, we demonstrate how to use **RPEM** to generate random
+evolutionary graphs and simulate the evolution of DNA sequences and traits along
+their edges. The resulting data--produced under known phylogenetic or network
+structures and controlled evolutionary assumptions--can serve as benchmark
+datasets for a variety of applications.
+
+For example, such synthetic data are valuable for:
+
+* Evaluating the performance of quantitative phylogenetic methods,
+
+* Training and testing supervised and unsupervised machine learning models,
+
+* Estimating evolutionary distances, inferring graph topology, or reconstructing
+ancestral states.
+
+By providing full control over the generative process, **RPEM** enables
+rigorous, reproducible evaluation of phylogenetic inference tools and the
+development of novel algorithms for evolutionary analysis.
+
+
+## Simulating Evolutionary Graphs
+
+Before proceeding, the **RPEM** package must be loaded into the R session using:
+
+```{r}
+library(RPEM)
+```
+
+### Molecular (DNA) Evolution Simulator 
+
+RPEM includes a molecular evolution simulator that models DNA sequence evolution
+along the edges of a phylogenetic graph as a continuous-time Markov process.
+This process governs how nucleotides (A, G, C, T) change over evolutionary time
+according to a specified substitution model.
+
+The dynamics of this process are defined by a rate matrix Q, which describes the
+instantaneous rates of change between nucleotide states:
+
+$$
+\mathbf{Q} = \begin{bmatrix}
+-\Sigma_\mathrm{A} & r_\mathrm{AG} \pi_\mathrm{G} & r_\mathrm{AC} \pi_\mathrm{C} & r_\mathrm{AT} \pi_\mathrm{T} \\
+r_\mathrm{GA} \pi_\mathrm{A} & -\Sigma_\mathrm{G} & r_\mathrm{GC} \pi_\mathrm{C} & r_\mathrm{GT} \pi_\mathrm{T} \\
+r_\mathrm{CA} \pi_\mathrm{A} & r_\mathrm{CG} \pi_\mathrm{G} & -\Sigma_\mathrm{C} & r_\mathrm{CT} \pi_\mathrm{T} \\
+r_\mathrm{TA} \pi_\mathrm{A} & r_\mathrm{TG} \pi_\mathrm{G} & r_\mathrm{TC} \pi_\mathrm{C} & -\Sigma_\mathrm{T}
+\end{bmatrix},
+$$
+
+where:
+
+* $r_{x,y}$ is the relative rate of substitution from nucleotide $x$ to $y$,
+
+* $\pi_\mathrm{x}$ is the equilibrium frequency of nucleotide $x$,
+
+* $\Sigma_x$ is the sum of the off-diagonal elements in row $x$, ensuring that
+  each row of $\mathbf{Q}$ sums to zero (a requirement for valid Markov rate
+  matrices).
+
+For example:
+
+$$
+\Sigma_\mathrm{A} = r_\mathrm{AG} \pi_\mathrm{G} + r_\mathrm{AC} \pi_\mathrm{C} + r_\mathrm{AT} \pi_\mathrm{T}
+$$
+
+The model assumes: 
+
+* The sum of equilibrium frequencies is
+
+$$
+\pi_\mathrm{A} + \pi_\mathrm{G} + \pi_\mathrm{C} + \pi_\mathrm{T} = 1
+$$
+
+* The 12 non-diagonal rate parameters $r_{x,y}$ (for $x \neq y$) are scaled so
+that the average rate across all substitutions is 1.
+
+These constraints ensure that the $\mathbf{Q}$ matrix is properly normalized,
+allowing evolutionary time to be measured in expected substitutions per site.
+
+In addition to nucleotide substitutions, RPEM simulates insertions and deletions
+(indels) by extending the Markov process to include gaps (denoted as
+${\text -}$) as an additional evolutionary state. This allows the model to
+capture sequence length variation across lineages.
+
+Gaps are treated as a fifth state in the evolutionary process: 
+
+* A gap-to-nucleotide transition simulates an insertion,
+
+* A nucleotide-to-gap transition simulates a deletion.
+
+The full process is governed by an extended rate matrix $\mathbf{Q^*}$:
+
+$$
+\mathbf{Q^*} = \begin{bmatrix}
+-\Sigma_\mathrm{\text -} & r_\mathrm{{\text -} N} (1 - \pi_{\text -}) \\
+r_\mathrm{N {\text -}} \pi_{\text -} & \mathbf{Q} (1 - \pi_{\text -})
+\end{bmatrix},
+$$
+
+where:
+
+* $r_\mathrm{{\text -} N}$ is the insertion rate (gap $\rightarrow$ 
+nucleotide),
+
+* $r_\mathrm{N {\text -}}$ is the deletion rate (nucleotide $\rightarrow$ gap)
+),
+
+* $\pi_{\text -}$ is the equilibrium frequency of gaps in the alignment,
+
+* $1 - \pi_{\text -}$  is the total equilibrium frequency of nucleotides,
+
+* $\mathbf{Q}$ is the original nucleotide substitution rate matrix (as defined
+  earlier),
+
+* $\Sigma_\mathrm{\text -} = r_\mathrm{{\text -} N} (1 - \pi_{\text -})$ ensures
+the row sums of $\mathbf{Q^*}$ are zero.
+
+This block-structured formulation allows joint simulation of substitutions and
+indels under a unified continuous-time Markov framework. The resulting sequences
+include both base changes and alignment gaps, producing biologically realistic
+alignments suitable for benchmarking phylogenetic inference methods or training
+machine learning models.
+
+The resulting $5 \times 5$ rate matrix $\mathbf{Q^*}$, which governs the joint
+evolution of nucleotides (A, C, G, T) and gaps (${\text -}$), is defined as:
+
+$$
+\mathbf{Q^*} = \begin{bmatrix}
+-\Sigma_\mathrm{{\text -}} & r_\mathrm{{\text -} A} \pi_\mathrm{A} (1 - \pi_{\text -}) & r_\mathrm{{\text -} G} \pi_\mathrm{G} (1 - \pi_{\text -}) & r_\mathrm{{\text -} C} \pi_\mathrm{C} (1 - \pi_{\text -}) & r_\mathrm{{\text -} T} \pi_\mathrm{T} (1 - \pi_{\text -}) \\
+r_\mathrm{A {\text -}} \pi_{\text -} & -\Sigma_\mathrm{A} & r_\mathrm{AG} \pi_\mathrm{G} (1 - \pi_{\text -}) & r_\mathrm{AC} \pi_\mathrm{C} (1 - \pi_{\text -}) & r_\mathrm{AT} \pi_\mathrm{T} (1 - \pi_{\text -}) \\
+r_\mathrm{G {\text -}} \pi_{\text -} & r_\mathrm{GA} \pi_\mathrm{A} (1 - \pi_{\text -}) & -\Sigma_\mathrm{G} & r_\mathrm{GC} \pi_\mathrm{C} (1 - \pi_{\text -}) & r_\mathrm{GT} \pi_\mathrm{T} (1 - \pi_{\text -}) \\
+r_\mathrm{C {\text -}} \pi_{\text -} & r_\mathrm{CA} \pi_\mathrm{A} (1 - \pi_{\text -}) & r_\mathrm{CG} \pi_\mathrm{G} (1 - \pi_{\text -}) & -\Sigma_\mathrm{C} & r_\mathrm{CT} \pi_\mathrm{T} (1 - \pi_{\text -}) \\
+r_\mathrm{T {\text -}} \pi_{\text -} & r_\mathrm{TA} \pi_\mathrm{A} (1 - \pi_{\text -}) & r_\mathrm{TG} \pi_\mathrm{G} (1 - \pi_{\text -}) & r_\mathrm{TC} \pi_\mathrm{C} (1 - \pi_{\text -}) & -\Sigma_\mathrm{T}
+\end{bmatrix},
+$$
+
+where:
+
+* $r_\mathrm{{\text -} x}$ is the insertion rate (gap $\rightarrow$ nucleotide
+$x$),
+
+* $r_\mathrm{x {\text -}}$ is the deletion rate (nucleotide $x$ $\rightarrow$ 
+gap),
+
+* $\pi_x$ is the equilibrium frequency of nucleotide $x$,
+
+* $\pi_{\text -}$ is the equilibrium frequency of gaps,
+
+* $1 - \pi_{\text -}$ is the total equilibrium probability of being in a
+nucleotide state,
+
+* $\Sigma_{\text -} = \sum_{x \in \lbrace \mathrm{A, G, C, T} \rbrace} r_{{\text -},x}\pi_x (1 - \pi_{\text -})$
+
+* $\Sigma_x$ (for each nucleotide) includes both substitution and deletion
+rates, ensuring that each row of $\mathbf{Q^*}$ sums to zero.
+
+The probability transition matrix $\mathbf{P}$ is derived from the extended rate
+matrix $\mathbf{Q^*}$ (which includes both nucleotide substitutions and indels)
+using matrix exponentiation:
+
+$$
+\mathbf{P}(t) = e^{\rho t \mathbf{Q^*}}
+$$
+
+In this expression:
+
+* $t$ represents the evolutionary time (in expected substitutions per site),
+
+* $\mathbf{Q^*}$ is the instantaneous rate matrix (as defined previously),
+
+* $\rho$ is the mean shift rate over all possible states,
+
+* $e^{\rho t \mathbf{Q^*}}$  denotes the matrix exponential, which computes the
+probabilities of transitioning from one state to another over time $t$,
+
+$\mathbf{P}(t)$ is a $5 \times 5$ matrix where each element $P_{ij}(t)$ gives
+the probability of starting in state $i$ and ending in state $j$ after time $t$.
+
+Each row of $\mathbf{P}(t)$ sums to 1, as required for a valid probability
+matrix.
+
+RPEM implements eight commonly used models of DNA sequence evolution, all of
+which are time-reversible (i.e., $r_\mathrm{xy} = r_\mathrm{yx}$ for all
+nucleotide pairs $x$ and $y$). These include well-known models such as:
+
+* Jukes–Cantor (JC69),
+
+* Kimura 2-parameter (K80),
+
+* Felsenstein 1981 (F81),
+
+* Hasegawa–Kishino–Yano (HKY85),
+
+* General Time Reversible (GTR), and others.
+
+This functionality is provided by the `DNArate()` function, which generates the
+corresponding rate matrix $\mathbf{Q^*}$ based on the selected model and
+user-specified parameters (e.g., equilibrium frequencies,
+transition/transversion rate ratios). The function is called as follows: 
+
+```{r}
+Q <- DNArate(model="JC69", piGap=0.3, insertionRate=0.1, deletionRate=0.1)
+Q
+```
+
+This shift rate matrix corresponds to the JC69 model of DNA evolution
+[@JC69model], assuming equal nucleotide frequencies
+($\pi_\mathrm{A} = \pi_\mathrm{G} = \pi_\mathrm{C} = \pi_\mathrm{T} = 0.25$) and
+time-reversible substitution rates. In this example, we extend the model to
+include indels, with:
+
+* An equilibrium gap frequency of $30\%$ ($\pi_{\text -} = 0.3$),
+
+* Insertion and deletion rates set to 0.1 (relative to the substitution rate
+  scale).
+
+**RPEM** implements molecular evolution simulations through the function
+`molEvolSim()`, which takes the following key arguments:
+
+* The instantaneous rate matrix $\mathbf{Q^*}$ (including substitutions and
+  indels),
+
+* The time step $t$ (argument step), representing the length of each
+  evolutionary branch or segment,
+
+* The mean shift rate $\rho$ (argument `rho`), used to scale the overall rate of
+  evolution (e.g., to model variation in evolutionary tempo across lineages).
+
+A typical call to simulate DNA sequence evolution under this model is as
+follows:
+
+```{r}
+em1 <- molEvolSim(Q, step = 1, rho = 5)
+```
+
+The `molEvolSim()` function returns a list containing three embedded functions
+that allow flexible and efficient simulation of molecular evolution:
+
+* `$recalculate(t, rho)` Updates the transition probability matrix
+  $\mathbf{P}(t) = e^{\rho t \mathbf{Q^*}}$ for new values of evolutionary time
+  $t$ (argument `t`) and mean shift rate $\rho$ (argument `rho`), without
+  reconstructing the entire simulator.
+
+* `$evolve(N)` Simulates the evolution of a nucleotide (or gap) over time. It
+  takes an initial nucleotide state (as a raw character, e.g., "A" or "-") and
+  returns a new state drawn from the posterior probability distribution after
+  evolution along a branch of length $t$. This function can be called
+  iteratively to simulate evolution across multiple steps.
+
+* `$getMt()` Returns the current transition probability matrix $\mathbf{P}(t)$,
+  computed from the rate matrix $\mathbf{Q^*}$ and the current values of $t$ and
+  $\rho$.
+
+This modular design allows users to simulate sequence evolution efficiently across complex phylogenetic graphs, including trees and reticulated networks.
+For example: 
+
+```{r}
+em1$getMt()
+```
+
+returns the transition probability matrix $\mathbf{P}(t)$ for a time step of
+$t = 1$  and a mean shift rate of $\rho = 5$. This matrix gives the
+probabilities of evolving from one nucleotide (or gap) state to another over
+that evolutionary duration. 
+
+If we recalculate the simulator for a shorter time step, $t = 0.1$: 
+
+```{r}
+em1$recalculate(0.1, 5)
+em1$getMt()
+```
+
+the transition probabilities become smaller, reflecting the reduced opportunity
+for change over shorter evolutionary intervals. 
+
+Conversely, if we increase the time step to $t = 5$:
+
+```{r}
+em1$recalculate(5, 5)
+em1$getMt()
+```
+
+the transition probabilities increase, as more time allows for a higher
+likelihood of substitution or indel events.
+
+This dynamic behavior illustrates how the Markov process scales with time and
+rate, enabling biologically realistic simulations across branches of varying
+lengths. 
+
+These tools provide fine-grained control over DNA sequence evolution, supporting
+applications in: 
+
+* Testing phylogenetic inference methods,
+
+* Benchmarking sequence alignment algorithms,
+
+* Generating training data for machine learning models in evolutionary genomics.
+
+> In R, it is more efficient to work with raw vectors when manipulating
+> individual characters of a character string. Unlike standard character
+> strings, raw vectors allow direct access and modification of single-byte
+> elements using standard subsetting operators (`[]`), avoiding the overhead of
+> string-specific functions like `substr()` or `strsplit()`. After manipulation,
+> the `rawToChar()` function can be used to convert the raw vector back into a
+> character string. This approach is particularly useful in low-level text
+> processing tasks, such as simulating DNA sequence evolution, where performance
+> and byte-level control are important.
+
+For example, let us simulate the evolution of a single DNA site starting with
+the nucleotide "A" at time $t = 0$, evolving over 100 time steps, each of length
+$t = 1$, under a specified substitution model (e.g., JC69) with mean shift rate
+$\rho = 5$. This can be achieved using the molecular evolution simulator
+function returned by `molEvolSim()`:
+
+```{r}
+set.seed(1324987)                 ## Set RNG seed for reproducibility.
+em1$recalculate(1, 5)             ## Recalculate for a time step of 1
+s <- raw(101)                     ## For storage
+s[1] <- charToRaw("A")            ## Initialize with and "A"
+for(i in 2:101)                   ## Simulation loop:
+  s[i] <- em1$evolve(s[i - 1]) 
+rawToChar(s)                      ## Show time series
+```
+
+This example shows multiple instances of nucleotide conservation (two or more
+consecutive occurrences of the same nucleotide), substitutions (changes from one
+nucleotide to another), deletions, and insertions--demonstrating the full range
+of molecular evolutionary processes simulated by **RPEM**.
+
+The assumption that all sites in a DNA sequence evolve at the same rate is often
+violated in real biological data. In practice, sites exhibit rate heterogeneity,
+with some evolving slowly (e.g., functionally constrained regions) and others
+more rapidly (e.g., non-coding or loop regions).
+
+To generate more biologically realistic simulations, RPEM allows users to assign
+site-specific evolutionary rates drawn from a gamma distribution--a commonly
+used model for among-site rate variation in phylogenetics. This distribution is
+parameterized by a shape parameter $\alpha$, where lower values (e.g.,
+$\alpha < 1$) reflect high rate variation, and higher values approach a constant
+rate.
+
+The function `drawEvolRate()` facilitates this process by generating random rate multipliers from a gamma distribution with user-defined shape and scale parameters:
+
+```{r}
+er <- drawEvolRate(NN=70, gamma.shape=3, gamma.scale=2e-2)
+er
+```
+
+where: 
+
+* `NN` is the number of sites in the DNA sequence,
+
+* `gamma.shape` is the shape parameter of the gamma distribution, controlling
+  the degree of rate variation across sites (lower values indicate greater
+  heterogeneity),
+
+* `gamma.scale` is the scale parameter, determining the spread of the
+  distribution.
+
+The resulting vector er contains site-specific evolutionary rate multipliers 
+($\rho$), which can be applied during sequence simulation to scale the local
+substitution rate along branches. This allows **RPEM** to generate more
+biologically realistic DNA alignments, reflecting the well-documented phenomenon
+of among-site rate variation observed in empirical data.
+
+By incorporating rate heterogeneity, users can better emulate real-world evolutionary dynamics and improve the realism of benchmark datasets for phylogenetic inference, model testing, or machine learning applications. 
+
+
+**RPEM** includes the function `drawDNASequence()` to generate random initial
+DNA sequences for use in evolutionary simulations. This allows users to start
+simulations from biologically plausible initial conditions, with control over
+nucleotide and gap composition. 
+
+The function is called as follows: 
+
+```{r}
+set.seed(13987463)    ## Set RNG seed for reproducibility.
+
+## Generating a random DNA sequence
+isq <- drawDNASequence(NN=length(er), piGap=0.2, pi=c(0.35,0.15,0.15,0.35))
+rawToChar(isq)        ## Showing the random DNA sequence
+```
+
+where: 
+
+* `NN` is the length of the sequence (here, matching the number of sites in
+  `er`),
+
+* `piGap` is the equilibrium frequency of gaps ($\pi_{\text -} = 0.2),
+
+* `pi` is a vector of equilibrium nucleotide frequencies:
+  $\pi_\mathrm{A} = 0.35$, $\pi_\mathrm{G} = 0.15$, $\pi_\mathrm{C} = 0.15$,
+  $\pi_\mathrm{T} = 0.35$.
+
+The resulting sequence is slightly AT-rich (since
+$\pi_\mathrm{A} + \pi_\mathrm{T} = 0.7$) and includes a $20\%$ probability of
+gaps, reflecting a realistic indel burden. Internally, the sequence is stored as
+a raw vector for efficient manipulation during simulation, and can be converted
+to a character string using `rawToChar()` when needed.
+
+This functionality supports the generation of diverse, user-defined starting
+points for molecular evolution simulations--enhancing the flexibility and
+realism of synthetic data in phylogenetic method development.
+
+We will now simulate the evolution of the initial DNA sequence under a realistic
+model where all sites share the same underlying substitution and indel process
+(defined by the shift rate matrix $\mathbf{Q^*}$), but each site evolves at its
+own rate. This is achieved by assigning a site-specific mean shift rate
+($\rho_j$), drawn earlier from a gamma distribution (e.g., using
+`drawEvolRate()`).
+
+To implement this, we create a list of molecular evolution simulators--one for
+each site--where each simulator uses the same $\mathbf{Q^*}$ and time step, but
+is scaled by its own $\rho_j$ value:
+
+```{r}
+nesl <- list()              ## A list of nucleotide evolution simulators
+
+## Initialize each simulator with a different mean shift rate:
+for(j in 1:length(er))
+  nesl[[j]] <- molEvolSim(Q, step = 1, rho = er[j])
+```
+
+This approach allows site-specific rate variation, a well-documented feature of
+molecular evolution: some sites (e.g., coding regions) evolve slowly, while
+others (e.g., non-functional regions) accumulate changes more rapidly.
+
+Each simulator in `nesl` can then be used independently to evolve its
+corresponding site along a phylogenetic tree or network, enabling biologically
+realistic sequence simulation that accounts for among-site rate heterogeneity--a
+critical feature for generating benchmark datasets in phylogenetics and machine
+learning.
+
+To evolve the initial DNA sequence forward in time, we apply the site-specific
+molecular evolution simulators to each nucleotide position. This is done by
+calling the `$evolve()` method of each simulator in the list `nesl`, using the
+corresponding site from the initial sequence as input:
+
+```{r}
+isq2 <- raw(length(isq))          ## Allocate storage for the evolved sequence
+for(j in 1:length(isq))                   ## For each site j
+  isq2[j] <- nesl[[j]]$evolve(isq[j])     ## Evolve nucleotide at site j
+rawToChar(isq)                            ## Initial sequence
+rawToChar(isq2)                           ## Evolved sequence
+```
+
+Each site evolves under the same substitution and indel process (defined by
+$\mathbf{Q^*}$), but with a rate scaled by its own $\rho_j$ value drawn from a
+gamma distribution. This results in biologically realistic variation in
+evolutionary rates across sites.
+
+The output shows how individual nucleotides (or gaps) change over a single time
+step of length $t = 1$, reflecting the stochastic nature of molecular evolution.
+Some sites remain conserved, while others undergo substitutions or
+indels--demonstrating the combined effects of the underlying Markov process and
+site-specific rate variation.
+
+This modular simulation approach enables fine-grained control over sequence
+evolution and supports the generation of complex, realistic datasets for
+phylogenetic method evaluation, alignment benchmarking, or training machine
+learning models in evolutionary genomics.
+
+To simulate evolution over multiple time steps, we extend the process by adding
+an outer loop that iterates across successive time intervals. At each step,
+every site in the sequence is evolved according to its own site-specific
+evolutionary rate, as defined by its corresponding simulator in the `nesl` list.
+
+This two-level structure--sites in the inner loop, time steps in the outer
+loop--allows for realistic, asynchronous evolution across the sequence:
+
+```{r, fig.width = 7.0}
+stbl <- matrix(raw(),51,length(er))           ## For storing 51 sequences
+stbl[1,] <- isq                               ## Initial sequence
+stbl[2,] <- isq2                              ## Second sequence
+
+## Simulation loops from squence 3 to 51:
+for(i in 3:nrow(stbl))                              ## Loop for each sequence i
+  for(j in 1:ncol(stbl))                            ## Loop for each site j
+    stbl[i,j] <- nesl[[j]]$evolve(stbl[i - 1,j])    ## Simulate the shifts
+
+## Showing the DNA sequences:
+stbl %>%
+  concatenate %>%
+  show.sequence
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "dnaSeq1",
+  paste(
+    "A set of 51 aligned DNA sequences generated by evolving a randomly",
+    "generated ancestral sequence over 50 regular time steps. Nucleotides are",
+    "color-coded as follows: red = Adenine (A), yellow = Guanine (G),",
+    "green = Cytosine (C), blue = Thymine (T), and grey = gap (--). The",
+    "sequences were simulated using a site-specific molecular evolution model",
+    "with gamma-distributed rate variation across sites, as implemented in",
+    "**RPEM**. This alignment represents a synthetic dataset suitable for",
+    "benchmarking phylogenetic inference methods or training machine learning",
+    "models in evolutionary genomics."
+  )
+)
+
+figCounter$getCaption("dnaSeq1")
+```
+
+In this code example, we introduce two additional functions from RPEM: `concatenate()` and `show.sequence()`.
+
+* The `concatenate()` function applies `rawToChar()` row by row to a raw matrix
+  (e.g., a matrix of simulated sequences), converting each row into a character
+  string. It optionally allows the removal of specified characters--most
+  commonly gaps ("-")--during the conversion. This is useful for generating
+  clean sequence alignments for export or analysis.
+
+* The `show.sequence()` function is a graphical tool for visualizing sets of DNA
+  sequences. It displays sequences as colored character matrices, with
+  customizable color schemes for nucleotides (e.g., A = red, G = yellow,
+  C = green, T = blue) and gaps (e.g., grey), enabling intuitive inspection of
+  conservation, variation, and indel patterns.
+
+For instance, one may display the simulated sequences while omitting gaps as
+follows:
+
+```{r, fig.width = 7.0}
+## Display the DNA sequences without the gaps:
+stbl %>%
+  concatenate(discard="-") %>%
+  show.sequence
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "dnaSeq2",
+  paste(
+    "A set of 51 DNA sequences generated by evolving a randomly generated",
+    "ancestral sequence over 50 regular time steps, with gaps removed prior to",
+    "visualization. Nucleotides are color-coded as follows: red = Adenine (A),",
+    "yellow = Guanine (G), green = Cytosine (C), and blue = Thymine (T). The",
+    "sequences were simulated using a site-specific molecular evolution model",
+    "with gamma-distributed rate variation across sites, as implemented in",
+    "**RPEM**. This alignment represents a synthetic dataset suitable for",
+    "benchmarking phylogenetic inference methods or training machine learning",
+    "models in evolutionary genomics."
+  )
+)
+
+figCounter$getCaption("dnaSeq2")
+```
+
+This is how DNA sequences typically appear after sequencing: as aligned,
+character-based strings of nucleotides. In this simulation, the sequences were a
+priori aligned by construction--meaning that homologous sites evolved from a
+common ancestral position--making this alignment "true" by design.
+
+Such known alignments are invaluable for evaluating the accuracy and performance
+of DNA sequence alignment algorithms and software (e.g., MAFFT, Clustal,
+MUSCLE), as they provide a ground truth against which inferred alignments can be
+compared.
+
+When needed, the simulated sequences can be exported in standard FASTA format
+using the RPEM function `write.fasta()`:
+
+```{r}
+stbl %>%
+  concatenate(discard="-") %>%
+  write.fasta(file="Test.fasta")
+```
+
+This FASTA file can be easily accessed and read by other software and R
+packages, such as the **ape** package, which provides comprehensive tools for
+phylogenetic analysis. 
+
+For example, you can read the simulated sequences into R using the `read.dna()` function from **ape**:
+
+```{r}
+if(require(ape)) {
+  tmp <- read.dna(file="Test.fasta", format="fasta", as.character=TRUE)
+  tmp[1:5]
+}
+```
+
+```{r, echo=FALSE, results='hide'}
+file.remove("Test.fasta")
+rm(tmp)
+```
+
+### Trait Evolution Simulator 
+
+RPEM simulates quantitative trait evolution using the Ornstein-Uhlenbeck (OU)
+process, a stochastic model that extends Brownian motion by incorporating
+stabilizing selection toward an optimal trait value.
+
+Unlike pure diffusion (Brownian motion), where trait values drift randomly over
+time, the OU process introduces a pull toward an optimum ($x_{opt}$), simulating
+evolutionary constraints such as stabilizing selection or adaptive peaks in a
+fitness landscape. The strength of this pull is governed by the selection rate
+$\alpha$: higher values of $\alpha$ result in tighter clustering around the
+optimum, while lower values allow for greater divergence.
+
+The trait value $x_t$ after evolutionary time $t$ is drawn from a normal
+distribution:
+
+$$
+x_t \sim \mathcal{N} \left(x_0 e^{-\alpha t} + (1 - e^{-\alpha t}) x_{opt}, \sigma \sqrt{\frac{(1 - e^{-2\alpha t})}{2 \alpha}} \right),
+$$
+
+where:
+
+* $x_0$ : initial trait value at time 0,
+
+* $x_t$ : trait value after time $t$,
+
+* $x_{opt}$ : optimal (target) trait value,
+
+* $\alpha$ : selection strength (rate of reversion to optimum),
+
+* $\sigma$ : scale parameter of the underlying Gaussian process, controlling the
+  magnitude of random fluctuations.
+
+When $\alpha = 0$ , the model reduces to Brownian motion:
+
+$$
+x_t \sim \mathcal{N}(x_0,\sigma)
+$$
+
+indicating neutral evolution with no selective constraint.
+
+This formulation allows **RPEM** to simulate a wide range of evolutionary
+scenarios--from neutral drift to strong stabilizing selection--making it
+suitable for generating realistic trait data under complex models, testing
+comparative methods, or training machine learning algorithms in evolutionary
+biology.
+
+#### Quantitative traits
+
+In **RPEM**, quantitative trait evolution is simulated using the function
+`traitEvolSim()`. This function implements a stochastic evolutionary model--by
+default, Brownian motion, but extendable to Ornstein-Uhlenbeck and other
+processes--and allows users to simulate trait trajectories along evolutionary
+branches or edges of a phylogenetic graph.
+
+At a minimum, `traitEvolSim()` requires three arguments:
+
+```{r}
+traitEvolSim(
+    name = "Neutral",   ## Name of the trait (for labeling and tracking)
+    sigma = 2.5,        ## Standard deviation of the process (e.g., mm/Ma)
+    step = 0.05         ## Time step for simulation (e.g., in million years)
+  ) -> ts_n
+```
+
+* `name` : A character string identifying the trait (useful when simulating
+  multiple traits).
+
+* `sigma` : The evolutionary rate parameter, representing the standard deviation
+  of the trait change per unit time under Brownian motion.
+
+* `step` : The time increment used in the simulation, which should be compatible
+  with the time scale of the input phylogenetic graph.
+
+The function returns a simulator object (`ts_n` in this case), which can be used
+to evolve trait values across a phylogeny or network. This object contains
+methods for recalibrating parameters and simulating trait changes over specified
+time intervals.
+
+This modular design supports the simulation of both neutral evolution and
+adaptive scenarios (e.g., with stabilizing selection via an optimum), enabling
+the generation of realistic trait datasets for method testing, comparative
+analysis, or machine learning applications.
+
+When called in this way, $\alpha = 0$, meaning there is no stabilizing
+selection, and the trait evolves according to a purely diffusive
+process--equivalent to Brownian motion. This model assumes neutral evolution,
+where changes accumulate randomly over time, with no directional or stabilizing
+forces.
+
+The trait evolution is simulated as follows:
+
+```{r, fig.width = 7.0}
+trait <- numeric(1001)      ## For storing the values
+trait[1] <- 40              ## Initial trait value
+
+## Update the trait value at time t using the value at time t - 1:
+for(i in 2:length(trait))
+  trait[i] <- ts_n$updateValue(trait[i - 1])
+
+plot(y = trait, x=0.05*(0:1000), type="l", las=1, ylab="Mean leaf width (mm)",
+     xlab="Time (Ma)")
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "trait1",
+  paste(
+    "Neutral evolution of a quantitative trait (mean leaf width) over a period",
+    "of 50 million years."
+  )
+)
+
+figCounter$getCaption("trait1")
+```
+
+This simulation spans 1,001 time steps (50 million years in increments of
+$0.05\,\mathrm{Ma}$), starting from an initial value of $40\,\mathrm{mm}$. At
+each step, the trait is updated using the `$updateValue()` method of the
+simulator object `ts_n`, which draws a new value based on the OU/Brownian motion
+transition model. The resulting trajectory illustrates the random walk behavior
+characteristic of neutral evolution, where variance in the trait increases with
+time.
+
+This approach enables realistic simulation of continuous trait evolution under
+user-defined parameters, supporting applications in comparative biology, method
+validation, and theoretical modeling.
+
+When the argument $\alpha > 0$, the evolutionary process includes stabilizing
+selection toward one or more optimal trait values, and the simulation no longer
+follows pure Brownian motion. In this case, the Ornstein-Uhlenbeck (OU) model is
+used, and the optima argument must be provided.
+
+For example, when specifying `alpha = 1`, a single optimum can be defined as
+follows:
+
+```{r}
+traitEvolSim(
+  name = "OUsingle",    ## Name of the trait
+  alpha = 1,            ## Selection strength (pull toward optimum)
+  sigma = 2.5,          ## Evolutionary rate (standard deviation of changes)
+  optima = 10,          ## Single optimal trait value
+  step = 0.05           ## Time step for simulation (in million years)
+) -> ts_OUs
+```
+
+* `alpha = 1` indicates a relatively strong attraction toward the optimum.
+
+* `optima = 10` sets the long-term adaptive target for the trait (e.g., an
+  optimal leaf width of $10\,\mathrm{mm}$).
+
+The trait will fluctuate around this optimum due to random perturbations scaled
+by $\sigma$, but deviations are pulled back proportionally to the distance from the optimum and the value of $\alpha$.
+
+This configuration is useful for simulating traits under stabilizing selection,
+such as morphological or physiological characters constrained by natural
+selection. The resulting trajectories reflect bounded variation, making them
+more biologically realistic for many empirical systems.
+
+Now, the simulator is configured with a single optimum value of
+$10\,\mathrm{mm}$. The evolution of the trait is computed in a manner analogous
+to the neutral case, but under the influence of stabilizing selection that pulls
+the trait toward this optimum.
+
+The simulation proceeds as follows:
+
+```{r, fig.width = 7.0}
+trait <- numeric(1001)      ## For storing the values
+trait[1] <- 20              ## Initial trait value (far from optimum)
+
+## Update the trait value at time t using the value at time t - 1:
+for(i in 2:length(trait))
+  trait[i] <- ts_OUs$updateValue(trait[i - 1])
+
+plot(y = trait, x=0.05*(0:1000), type="l", las=1, ylab="Mean leaf width (mm)",
+     xlab="Time (Ma)")
+abline(h=10, lty=3)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "trait2",
+  paste(
+    "Non-neutral evolution of a quantitative trait (mean leaf width) over a",
+    "period of 50 million years, with a single trait optimum (10 mm)."
+  )
+)
+
+figCounter$getCaption("trait2")
+```
+
+Starting from an initial value of $20\,\mathrm{mm}$--twice the optimal value--
+the trait rapidly evolves toward the optimum ($10\,\mathrm{mm}$) due to the
+relatively strong selection rate ($\alpha = 1$). Over time, the trait fluctuates
+around the optimum, with deviations dampened by the restoring force of the OU
+process. 
+
+This trajectory illustrates the hallmark of stabilizing selection: convergence
+toward a phenotypic optimum with bounded variation, in contrast to the unbounded
+drift seen under Brownian motion. Such simulations are essential for studying
+adaptive evolution, modeling trait optima shifts, and testing comparative
+methods that account for selective constraints.
+
+When multiple optima are specified via the optima argument, the trait can shift
+between different adaptive peaks over time. To model this behavior, **RPEM**
+requires a shift intensity matrix (also known as a transition rate matrix) to be
+provided through the transition argument.
+
+This matrix defines the rates at which the evolving system switches from one
+optimum to another. Each off-diagonal element $q_{ij}$ represents the
+instantaneous rate of shifting from optimum $i$ to optimum $j$. Diagonal
+elements are set to `NA` (and internally computed to ensure row sums are zero),
+as is standard for rate matrices.
+
+In the example below, three optima are defined ($10$, $15$, and
+$20\,\mathrm{mm}$), and shifts between adjacent optima occur at a rate of $0.01$
+per million years, while direct shifts between non-adjacent optima (e.g., from
+$10$ to $20$) are disallowed (set to $0$):
+
+```{r}
+traitEvolSim(
+    name = "OUmultiple",  ## Name of the trait
+    alpha = 1,            ## Selection strength toward the current optimum
+    sigma = 2.5,          ## Evolutionary rate (standard deviation of changes)
+    optima = c(10,15,20), ## Three distinct trait optima
+    transition = matrix(
+      c(NA,   0.01, 0 ,
+        0.01, NA,   0.01,
+        0,    0.01, NA),
+      3, 3),
+    step = 0.05           ## Time step for simulation (in million years)
+  ) -> ts_OUm
+```
+
+* The transition matrix is $3 \times 3$, matching the length of optima.
+
+* A value of 0 indicates no direct transition between two optima.
+
+* The selection strength ($\alpha = 1$) applies to the current optimum: while
+  near optimum 10, the trait is pulled toward 10; if a shift occurs to optimum
+  15, the pull switches to 15.
+
+This setup enables simulation of adaptive regime shifts, such as those occurring
+during colonization of new environments or evolutionary diversification across
+niches. It provides a powerful framework for generating realistic trait
+evolution scenarios under complex selective landscapes.
+
+The simulation of traits under multiple adaptive optima requires tracking not
+only the trait value but also the current evolutionary regime--i.e., which
+optimum is currently active. This is managed through a state index, which
+represents the current optimum state and evolves according to the transition
+rate matrix.
+
+The process involves two key steps at each time point:
+
+1. Update the current optimum using the `$updateState()` method.
+
+2. Simulate the trait value under the current optimum using `$updateValue()`.
+
+This is implemented as follows:
+
+```{r, fig.width = 7.0}
+trait <- numeric(1001)      ## For storing the trait values
+trait[1] <- 20              ## Initial trait value
+state <- integer(1001)      ## For storing the current optimum (state index)
+state[1] <- 1               ## Initial optimum (first regime: 10 mm)
+
+## Update the state (optimum) and then the trait value at each time step:
+for(i in 2:length(trait)) {
+  state[i] <- ts_OUm$updateState(state[i - 1])
+  trait[i] <- ts_OUm$updateValue(trait[i - 1], state[i])
+}
+
+plot(y = trait, x=0.05*(0:1000), type="l", las=1, ylab="Mean leaf width (mm)",
+     xlab="Time (Ma)")
+lines(x=0.05*(0:1000), y=c(10,15,20)[state], col="black", lty=3L)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "trait3",
+  paste(
+    "Non-neutral evolution of a quantitative trait (mean leaf width) over a",
+    "period of 50 million years, with three trait optima (10, 15, and 20 mm)",
+    "that are shifting with time."
+  )
+)
+
+figCounter$getCaption("trait3")
+```
+
+* The state vector tracks which optimum (1, 2, or 3) is active at each time
+  step, evolving stochastically according to the transition matrix.
+
+* The trait evolves toward the current optimum (e.g., 10, 15, or 20 mm), with
+  shifts occurring probabilistically over time.
+
+* The dashed black line (`lty = 3`) shows the trajectory of the instantaneous
+  optimum, allowing visual comparison between the trait value and its target.
+
+This approach enables the simulation of complex adaptive landscapes, where
+species or populations shift between selective regimes--modeling phenomena such
+as niche switching, adaptive radiations, or environmental fluctuations. It
+provides a flexible framework for generating realistic evolutionary scenarios
+under non-stationary selection.
+
+#### Semi-quantitative or qualitative traits
+
+While the `traitEvolSim()` function in **RPEM** is designed to simulate
+continuous, quantitative traits under models such as Brownian motion or
+Ornstein-Uhlenbeck, it is straightforward to extend these simulations to
+generate semi-quantitative or qualitative traits. This is achieved by
+transforming the underlying continuous trait trajectory into discrete states
+using biologically informed rules.
+
+Ordered (Semi-Quantitative) Traits
+: An ordered categorical trait--such as root system size classified as tiny,
+small, normal, large, or huge--can be generated by applying thresholds to a
+simulated quantitative trait. These thresholds can be defined based on quantiles
+or fixed values.
+
+Binary Traits
+: A binary trait (e.g., presence/absence of a feature, smooth vs. dentate leaf
+margins) can be derived by applying a single threshold--such as the median of
+the simulated trait--where values above the threshold represent one state and
+values below represent the other.
+
+Multistate Qualitative Traits
+: For unordered multistate traits (e.g., flower color), one approach is to
+simulate multiple independent quantitative deviates (one per state), and assign
+the trait state at each time point to the deviate with the highest value. This
+method models transitions among states as competitive outcomes of underlying
+latent evolutionary processes.
+
+The following code demonstrates how to generate an ordered, a binary, and a five-category qualitative trait using simulated neutral evolution trajectories: 
+
+```{r, fig.width = 7.0}
+## Generate five random deviates (n = 300 each) using a neutral evolution
+## simulator:
+traits <- matrix(NA, 300, 5)
+traits[1,] <- c(0,0,1,0,0)
+
+for(i in 1:5)
+  for(j in 2:nrow(traits))
+    traits[j,i] <- ts_n$updateValue(traits[j - 1,i])
+
+## Simulate an ordered trait:
+bnd <- quantile(traits[,1],seq(0,1,length.out=6))
+bnd[c(1L,6L)] <- c(-Inf,Inf)
+cut(
+  traits[,1],
+  bnd,
+  c("tiny","small","normal","large","huge"),
+  ordered=TRUE
+) -> var_ordered
+
+pp <- par(no.readonly = TRUE)
+par(mar=c(5,7,2,2))
+plot(y=var_ordered, x=seq(0,50,length.out=length(var_ordered)), type="l",
+     yaxt="n", xlab="time (Ma)", ylab="Root system size\n")
+axis(2, at=1:5, labels=levels(var_ordered), las=1)
+par(pp)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "trait4",
+  paste(
+    "Evolution of a semi-quantitative trait (size of the plant's root system",
+    "represented as five categories) over a period of 50 million years. The",
+    "sifts are modeled using a quantitative trait evolving neutrally."
+  )
+)
+
+figCounter$getCaption("trait4")
+```
+
+```{r, fig.width = 7.0}
+## Simulate a binary trait:
+traits[,1] %>%
+  {. > median(.)} -> var_binary
+pp <- par(no.readonly = TRUE)
+par(mar=c(5,7,2,2))
+plot(y=var_binary, x=seq(0,50,length.out=length(var_binary)), type="l",
+     yaxt="n", xlab="time (Ma)", ylab="Leaf margin\n")
+axis(2, at=c(0,1), labels=c("Smooth","Dentate"), las=1)
+par(pp)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "trait5",
+  paste(
+    "Evolution of a binary trait (leaf margin either smooth or dentate) over a",
+    "period of 50 million years. The sifts are modeled using a quantitative",
+    "trait evolving neutrally."
+  )
+)
+
+figCounter$getCaption("trait5")
+```
+
+```{r, fig.width = 7.0}
+## Simulate a qualitative trait:
+traits %>%
+  apply(
+    1L,
+    which.max
+  ) %>%
+  c("blue","green","red","yellow","purple")[.] %>%
+  as.factor -> var_qualitative
+
+pp <- par(no.readonly = TRUE)
+par(mar=c(5,7,2,2))
+plot(y=var_qualitative, x=seq(0,50,length.out=length(var_qualitative)),
+     type="l", yaxt="n", xlab="time (Ma)", ylab="Flower color\n")
+axis(2, at=1:5, labels=levels(var_qualitative), las=1)
+par(pp)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "trait6",
+  paste(
+    "Evolution of a quantitative trait (the color of flowers represented as",
+    "five colors) over a period of 50 million years. The sifts are modeled",
+    "using a quantitative trait evolving neutrally. It thus entails that each",
+    "of them is to proceed in a step wise manner with respect to the order",
+    "going from blue to green, to red, to yellow, and then to purple, in",
+    "either direction."
+  )
+)
+
+figCounter$getCaption("trait6")
+```
+
+This approach allows users to simulate realistic discrete traits that reflect
+complex evolutionary dynamics, while leveraging the flexibility of
+continuous-time stochastic models. These simulated traits can be used to test
+phylogenetic comparative methods, model character evolution, or generate
+training data for machine learning applications.
+
+[RENDU ICI...]
+
+### volutionary Network Simulation 
+
+While the simulator generator functions `molEvolSim()` and `traitEvolSim()`
+enable the simulation of DNA sequence and quantitative trait evolution, these
+processes must ultimately be applied across evolutionary graphs of varying
+complexity--ranging from simple phylogenetic trees to reticulated phylogenetic
+networks. To support such analyses, RPEM provides the `randomGraph()` function,
+a flexible tool for generating random evolutionary graphs under customizable
+rules.
+
+The `randomGraph()` function builds graphs incrementally using a vertex addition
+process, starting from a single origin (root) vertex and adding new vertices one
+at a time. Each new vertex is connected to existing vertices in the graph
+according to user-defined probabilistic rules that govern:
+
+* The number of outgoing edges (children) per vertex,
+
+* The number of incoming edges (parents) for each new vertex,
+
+* The length of edges (evolutionary distance),
+
+* Constraints on reticulation (e.g., limiting lateral transfer between distant
+  lineages).
+
+**Key Arguments of `randomGraph()`**
+
+* `NV` : The total number of vertices to generate.
+
+* `NC` : A function that returns the maximum number of children (outgoing edges)
+  for a vertex when it is created. This can be constant or randomly drawn.
+
+* `NP` : A function that returns the number of parents (incoming edges) for a
+  new vertex. Must be at least 1. Setting `NP = function(...) 1` yields a tree;
+  higher values allow reticulation.
+
+* `timestep` : A function that returns the edge length (evolutionary distance)
+  for newly created edges, often sampled from a distribution (e.g., uniform or
+  exponential).
+
+* `maxDist` : A function that returns the maximum allowed distance between
+  potential parent vertices. If two candidate parents are separated by a
+  distance greater than this value, they cannot both be parents of the same new
+  vertex--this limits biologically implausible lateral transfers.
+  
+* `...` : Additional named arguments passed to the functions `NC`, `NP`,
+  `timestep`, and `maxDist`. It is recommended that these functions include a
+  `...` argument in their definition to accept (and ignore) any extra
+  parameters.
+
+When a vertex reaches zero remaining child capacity (due to `NC` being
+decremented with each new outgoing edge), no further edges can originate from
+it.
+
+#### Example: Simulating a Dichotomous Tree 
+
+The following code generates a binary (dichotomous) phylogenetic tree with 50
+vertices:
+
+```{r, fig.height = 5, fig.width=7.15}
+randomGraph(
+  NV = 50,
+  NC = function(...) 2,  ## Each vertex has exactly two children
+  NP = function(...) 1,  ## Each new vertex has one parent (tree structure)
+  timestep = function(ts_min, ts_max, ...) runif(1, ts_min, ts_max),
+  maxDist = function(...) NULL,
+  ts_min = 2,
+  ts_max = 5,
+  verbose = FALSE
+) -> gr_dich
+
+gr_dich
+
+plot(gr_dich, cex.min=3, cex.lab=0.5)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "randomGraph1",
+  paste(
+    "A 50-vertex random dichotmic tree generated using function randomGraph()."
+  )
+)
+
+figCounter$getCaption("randomGraph1")
+```
+
+This example produces a strictly bifurcating tree, where every internal vertex
+has exactly two descendants, and all edges have lengths drawn uniformly between
+2 and 5 units of evolutionary time.
+
+This modular and extensible design allows `randomGraph()` to simulate a wide
+range of evolutionary scenarios--from pure vertical descent (trees) to complex
+reticulate evolution (networks)--making it a powerful tool for generating
+synthetic phylogenetic structures for method development, simulation studies,
+and machine learning applications in evolutionary biology.
+
+The functions `NC` and `NP` are passed arbitrary arguments such as `ts_min` and
+`ts_max` by `randomGraph()`, even though they do not use them. This is because
+`randomGraph()` uniformly passes all additional named arguments (via `...`) to
+each of the user-defined functions--`NC`, `NP`, `timestep`, and `maxDist`--for
+simplicity and consistency in interface design.
+
+In this example:
+
+* `NC = function(...) 2` and `NP = function(...) 1` ignore `ts_min` and `ts_max`
+because they return fixed values, but they are still compatible because they
+accept `...`.
+
+* `timestep = function(ts_min, ts_max, ...) runif(1, ts_min, ts_max)` explicitly
+  uses `ts_min` and `ts_max` to generate edge lengths from a uniform
+  distribution.
+
+* `maxDist = function(...) NULL` consistently returns `NULL`, effectively
+  disabling the constraint on parent dissimilarity.
+
+Indeed, since `NP returns 1` in this case (i.e., each new vertex has only one
+parent), the graph remains a tree--no reticulation occurs. As a result, the
+`maxDist` function is never meaningfully invoked, because the condition it
+governs (distance between multiple parents) does not arise. When a vertex has
+only one parent, there is no need to evaluate the distance between parents, so
+`maxDist()` is bypassed in practice.
+
+This illustrates an important point: `maxDist` only becomes relevant when `NP`
+returns values greater than 1, enabling reticulate evolution (e.g.,
+hybridization or lateral gene transfer). In such cases, multiple candidate
+parents may exist, and `maxDist` ensures that they are not too distantly
+separated in the graph--enforcing biological realism in lateral transfer events.
+
+Thus, while `ts_min`, `ts_max`, and `maxDist` are defined in the call, they are
+either unused or inactive under the current configuration. This highlights the
+importance of aligning the behavior of these functions with the desired graph
+structure—tree-like vs. reticulated.
+
+Another way to generate a random phylogenetic tree is to use the `rtree()`
+function from the **ape** package, a widely used tool for simulating and
+manipulating phylogenetic trees under a pure birth (Yule) or random branching
+process.
+
+For instance:
+
+```{r, fig.height = 5, fig.width=7.15}
+rtree(25) %>%
+  as.graph -> gr_rtree
+
+plot(gr_rtree, cex.min=1, show.vertex.labels = FALSE)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "randomGraph2",
+  paste(
+    "A 25-tip random dichotmic tree generated using function rtree() from",
+    "package ape that has been converted into a (49-vertex) phylogenetic graph."
+  )
+)
+
+figCounter$getCaption("randomGraph2")
+```
+
+Here: 
+
+* `rtree(25)` generates a random bifurcating tree with 25 tips (extant species
+  or operational taxonomic units).
+  
+* The resulting "phylo" object is converted into a phylogenetic graph using
+  `as.graph()`, a function from **RPEM** that transforms tree structures into a
+  graph representation compatible with downstream simulation steps.
+  
+* The plot displays the resulting tree with vertex size scaled by node type
+  (e.g., tips vs. internal nodes), without labeling individual vertices.
+
+While this approach provides a quick and biologically plausible tree topology
+for use in simulation studies, especially when the focus is on tree-like
+evolution rather than reticulate processes, `randomGraph()` offers fine-grained
+control over graph growth dynamics.
+
+Finally, a random reticulated phylogenetic graph is generated as follows:
+
+```{r, fig.height = 5, fig.width=7.15}
+randomGraph(
+  NV = 50,
+  NC = function(lambda_child, ...) 1 + rpois(1, lambda_child),
+  NP = function(lambda_parent, ...) 1 + rpois(1, lambda_parent),
+  timestep = function(ts_min, ts_max, ...) runif(1, ts_min, ts_max),
+  maxDist = function(max_anc, ...) runif(1, 0, max_anc),
+  lambda_child = 3.0,
+  lambda_parent = 3.0,
+  ts_min = 5,
+  ts_max = 12,
+  max_anc = 13,
+  verbose = FALSE
+) -> gr_ret
+
+gr_ret
+
+plot(gr_ret, cex.min=3, cex.lab=0.5)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "randomGraph3",
+  paste(
+    "A 50-vertex reticulated phylogenetic graph generated using randomGraph()",
+    "in the **RPEM** package. This network represents a non-tree-like",
+    "evolutionary history, where reticulation edges (e.g., hybridization or",
+    "lateral gene transfer events) connect vertices that have more than one",
+    "parent. The graph was constructed by incrementally adding vertices and",
+    "allowing multiple incoming edges per vertex, with edge lengths",
+    "representing evolutionary time. For visualization, the network is",
+    "displayed as a tree-like structure (black branches) with reticulation",
+    "events overlaid as red arrows, highlighting the locations of lateral",
+    "evolutionary contributions."
+  )
+)
+
+figCounter$getCaption("randomGraph3")
+```
+
+In this simulation: 
+
+* The number of children per vertex (outgoing edges) is set to
+  $NC \sim 1 + \mathcal{Poisson}(\lambda=lambda\_child)$, ensuring each vertex
+  has at least one child and an average of 4.0.
+
+* The number of parents per new vertex (incoming edges) is
+  $NP \sim 1 + \mathcal{Poisson}(\lambda=lambda\_parent)$, allowing for
+  reticulation (e.g., hybridization or lateral gene transfer), with an average
+  of 4.0 parents per vertex.
+
+* Edge lengths (evolutionary distances) are drawn uniformly from the interval
+  $[ts\_min,ts\_max] = [5,12]$.
+
+* The `maxDist` function constrains reticulation events by requiring that the
+  distance between potential parent vertices be no greater than a random value
+  drawn uniformly from the interval $[0,max\_anc] = [0,13]$. This enforces
+  biological plausibility by limiting lateral transfers between highly divergent
+  lineages.
+
+The resulting graph contains both vertical descent and reticulate connections,
+representing a phylogenetic network rather than a strictly bifurcating tree.
+
+For visualization, the reticulated graph is first coerced into a tree-like
+structure using the `as.phylo` method, which retains a primary treelike
+scaffold. The edges that are discarded during this coercion--i.e., the
+additional reticulation edges that violate the tree structure--are then overlaid
+as red arrows on top of the black tree segments. This highlights the locations
+and directions of lateral evolutionary events, providing a clear visual
+representation of network complexity.
+
+This approach enables the simulation and visualization of realistic evolutionary
+histories involving hybridization, horizontal gene transfer, or
+recombination--making **RPEM** a powerful tool for generating synthetic data to
+test network inference methods, comparative models, and machine learning
+algorithms in evolutionary genomics.
+
+### Simulating DNA Sequences and Trait Evolution Over a Graph
+
+We can now simulate DNA sequence evolution and trait dynamics directly on the
+random evolutionary graphs generated earlier, using the **RPEM** functions
+`simulateSequence()` and `simulateTrait()`. These functions propagate molecular
+or phenotypic change across the graph by treating edge lengths as evolutionary
+time intervals.
+
+The simulation proceeds from ancestral to descendant vertices, applying
+stochastic evolutionary models (e.g., nucleotide substitution or
+Ornstein-Uhlenbeck trait change) along each edge. In reticulated graphs, special
+handling is required for vertices with multiple parents (i.e., hybridization or
+lateral transfer events), which is managed through user-defined parental
+contribution weighting.
+
+#### Simulating DNA Sequence Evolution
+
+Function `simulateSequence()` simulates the evolution of a DNA sequence along
+the structure of a phylogenetic graph, including reticulated networks. It is
+called as follows:
+
+```{r, fig.width=7.15}
+gr_ret %>%
+  simulateSequence(
+    Q = DNArate(model="K80", piGap=0.25, insertionRate=0.15, deletionRate=0.15),
+    sqn = drawDNASequence(NN=200, piGap=0.25, pi=c(0.3,0.2,0.2,0.3)),
+    rate = drawEvolRate(NN=200, gamma.shape=4, gamma.scale=4e-4),
+    a = 1
+  ) -> seq_ret
+
+seq_ret %>%
+  concatenate(discard="-") %>%
+  show.sequence
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "graphSeq",
+  paste(
+    "A set of 50 DNA sequences generated by evolving a randomly generated",
+    "ancestral sequence along the 50-vertex reticulated phylogenetic graph",
+    "(Figure 11) using the simulation framework in RPEM. Each sequence",
+    "corresponds to a terminal vertex (tip) in the network, and evolution was",
+    "modeled under a K80 substitution model with gamma-distributed rate",
+    "variation across sites and a uniform gap frequency of 25%. The color",
+    "coding is as follows: red = Adenine (A), yellow = Guanine (G),",
+    "green = Cytosine (C), and blue = Thymine (T). This alignment represents a",
+    "synthetic dataset that includes both vertical descent and reticulate",
+    "evolutionary events, making it suitable for benchmarking phylogenetic",
+    "network inference methods or training machine learning models in",
+    "evolutionary genomics."
+  )
+)
+
+figCounter$getCaption("graphSeq")
+```
+
+Function arguments are:
+
+* `x` : A graph-class object (e.g., `gr_ret`) representing the phylogenetic or
+  reticulated network.
+
+* `Q` : A shift rate matrix generated by `DNArate()`, specifying substitution
+  and indel rates.
+  
+* `sqn` : An initial DNA sequence, typically generated via `drawDNASequence()`,
+  stored as a raw vector.
+
+* `rate` : A numeric vector of site-specific evolutionary rates, usually
+  generated by `drawEvolRate()`, allowing for among-site rate variation.
+
+* `a` : A parameter controlling the weighting function used to combine genetic
+  contributions from multiple parent vertices in reticulate nodes.
+
+* `weighting` : (Optional) A custom function that computes the relative
+  contribution of each parent based on edge distances. If not provided, the
+  default inverse-distance weighting is used.
+
+* `...` : Additional arguments passed internally to the weighting function.
+
+#### Parental Contribution Weighting in Reticulate Nodes 
+
+In reticulated graphs, a vertex may have more than one parent due to
+hybridization, horizontal gene transfer, or recombination. To compute the state
+of such a vertex, contributions from all parents must be combined using a
+weighting function $w_a(d_i)$, which assigns weights based on the distances
+$d_i$ from each parent to the child.
+
+The default weighting function is: 
+
+$$
+w_a(d_i) = \frac{d_i^{-a}}{\sum_{i=1}^n d_i^{-a}},
+$$
+
+where:
+
+* $d_i$ is the length of the edge from parent $i$,
+
+* $a$ is a user-defined exponent controlling how strongly closer parents are
+  favored.
+
+Special cases:
+
+* $a = 0$ : all parents contribute equally (distance-independent),
+
+* $a = 1$ : weights are proportional to the inverse of the edge distance, and
+
+* $a = 2$ : weights are proportional to the inverse squared distance (stronger
+  bias toward closer parents).
+
+In the example above, $a = 1$ implies that parental contributions are inversely
+proportional to their edge lengths--shorter edges (more direct evolutionary
+influence) receive higher weight.
+
+Users may supply a custom weighting function to implement alternative schemes
+(e.g., equal splitting, time-thresholded contributions, or biological models of
+recombination).
+
+This framework enables biologically realistic simulation of non-tree-like
+evolution, supporting applications in phylogenetic network inference, horizontal
+gene transfer detection, and machine learning model training.
+
+#### Simulating Trait Evolution 
+
+The `simulateTrait()` function in RPEM allows for the simulation of quantitative
+trait evolution across both tree-like and reticulated phylogenetic graphs. It
+applies a specified evolutionary model--such as Brownian motion or
+Ornstein-Uhlenbeck--along the edges of the graph, using edge lengths as
+evolutionary time intervals.
+
+For vertices with multiple parents (i.e., reticulate nodes), the trait value is
+computed as a weighted average of the contributions from all parent vertices,
+where weights are determined by the a parameter and the edge distances (as in
+`simulateSequence()`).
+
+**Neutral Trait Evolution (Brownian Motion)**
+
+To simulate neutral evolution, we use a Brownian motion model implemented via
+`traitEvolSim()`. The following code simulates a quantitative trait (e.g., mean
+leaf width) across the reticulated graph `gr_ret`:
+
+```{r here, fig.height=5, fig.width=7}
+gr_ret %>%
+  simulateTrait(
+    tem = traitEvolSim("Neutral", sigma=1),
+    value = 20,
+    a = 1
+  ) -> trait_ret_n
+
+trait_ret_n$value
+
+col <- head(rainbow(1200), 1000)
+
+plot(gr_ret, y=trait_ret_n$value, bg=col, cex.min=3, cex.lab=0.5, ylim=c(5,35))
+
+legend(x=40, y=32, pch=21, legend=seq(5,35,6), title="Width (mm)",
+       pt.bg=col[1 + ceiling((seq(5,35,6) - 5)/(35-5)*999)], xpd=TRUE)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "graphTrait1",
+  paste(
+    "Neutral evolution of a quantitative trait (mean leaf width) shown at the",
+    "vertices of a phylogenetic graph. The trait was simulated under a",
+    "Brownian motion model across a 50-vertex reticulated phylogenetic network",
+    "generated by `randomGraph()`. Edge lengths represent evolutionary time,",
+    "and trait values were propagated from ancestor to descendant vertices,",
+    "with changes accumulating proportionally to the square root of time and",
+    "the evolutionary rate parameter $\\sigma$. At reticulation events,",
+    "parental contributions were combined using inverse-distance weighting",
+    "($a = 1$). The resulting variation in leaf width reflects unconstrained",
+    "divergence, characteristic of neutral evolution, with values ranging",
+    "widely across the graph."
+  )
+)
+
+figCounter$getCaption("graphTrait1")
+```
+
+Here: 
+
+* `tem` specifies the trait evolution model: neutral (Brownian motion) with
+  evolutionary rate sigma = 1,
+
+* `value = 20` sets the initial trait value at the root, and
+
+* $a = 1$ uses inverse-distance weighting to combine trait values from multiple
+  parents at reticulation events.
+
+The resulting trait values show substantial variation across the graph,
+reflecting the unconstrained, random-walk nature of Brownian motion.
+
+**Non-Neutral Trait Evolution (Ornstein-Uhlenbeck with Single Optimum)**
+
+To simulate stabilizing selection, we apply an Ornstein-Uhlenbeck model with a
+single optimum: 
+
+```{r there, fig.height=5, fig.width=7}
+gr_ret %>%
+  simulateTrait(
+    tem = traitEvolSim("OUsingle", 1, alpha=1, optima=c(10)),
+    value = 10,
+    a = 1
+  ) -> trait_ret_OUs
+
+plot(gr_ret, y=trait_ret_OUs$value, bg=col, cex.min=3, cex.lab=0.5,
+     ylim=c(7,13))
+
+legend(x=40, y=32, pch=21, legend=seq(7,13,1), title="Width (mm)",
+       pt.bg=col[1 + ceiling((seq(7,13,1) - 7)/(13-7)*999)], xpd=TRUE)
+```
+```{r, echo=FALSE, results='asis'}
+figCounter$register(
+  "graphTrait2",
+  paste(
+    "Non-neutral evolution (single optimum of 10 mm) of a quantitative trait",
+    "(mean leaf width) shown at the vertices of a phylogenetic graph. The",
+    "trait was simulated under an Ornstein-Uhlenbeck (OU) model across a",
+    "50-vertex reticulated phylogenetic network, where evolutionary",
+    "trajectories are drawn toward a stabilizing optimum",
+    "($x_{opt} = 10\\,\\mathrm{mm}$) with selection strength $\\alpha = 1$.",
+    "Edge lengths represent evolutionary time, and trait values at",
+    "reticulation events are computed using inverse-distance weighting",
+    "(`a = 1`). Compared to the neutral model (Figure 13), the trait exhibits",
+    "much smaller variation, as deviations from the optimum are corrected over",
+    "time--reflecting the action of stabilizing selection."
+  )
+)
+
+figCounter$getCaption("graphTrait2")
+```
+
+In this case: 
+
+* $alpha = 1$ indicates strong attraction toward the optimum (optima = 10 mm),
+
+* The trait starts at the optimum and remains tightly clustered around it due to
+  stabilizing selection.
+
+#### Comparison of Evolutionary Models
+
+The simulated trait exhibits much smaller variation under the non-neutral (OU)
+model compared to the neutral (Brownian motion) model. This reduced variance
+arises because the OU process continuously pulls the trait toward its optimal
+value, mimicking the effects of stabilizing selection. In contrast, the Brownian
+motion model allows trait values to drift freely, resulting in greater
+divergence over time. 
+
+These simulations demonstrate how **RPEM** can be used to explore the effects of
+different evolutionary regimes--neutral drift versus adaptive constraints--on
+trait distribution across complex phylogenetic graphs, including those with
+reticulation. This capability is essential for testing comparative methods,
+modeling adaptive landscapes, and generating training data for machine learning
+in evolutionary biology.
+
+## Conclusion 
+
+The RPEM package provides--in addition to phylogenetic eigenvector maps
+calculations--a comprehensive and flexible framework for simulating evolutionary
+processes on both tree-like and reticulated phylogenetic graphs. Through
+functions like `randomGraph()`, `molEvolSim()`, and `traitEvolSim()`, RPEM
+enables users to:
+
+* Generate random phylogenetic trees and networks under customizable growth
+  rules.
+
+* Simulate DNA sequence evolution with substitution, indel, and among-site rate
+  variation.
+
+* Model quantitative trait evolution under neutral (Brownian motion) and
+  adaptive (Ornstein-Uhlenbeck) regimes.
+
+* Simulate semi-quantitative and qualitative traits by transforming underlying
+  continuous traits,
+
+* Propagate evolutionary change across complex graphs, including reticulate
+  events such as hybridization or lateral gene transfer.
+
+These capabilities make **RPEM** a powerful tool for:
+
+* testing and benchmarking phylogenetic inference methods,
+
+* developing and training machine learning algorithms for phylogenomic analysis,
+
+* exploring theoretical evolutionary dynamics under controlled conditions, and
+
+* generating realistic synthetic datasets when empirical data are limited.
+
+By integrating graph theory, stochastic modeling, and phylogenetics, **RPEM**
+bridges the gap between theoretical models and empirical applications, offering
+researchers a robust platform for method development and hypothesis testing in
+evolutionary biology.
+
+We invite users to explore the full potential of RPEM, contribute to its 
+development, and apply it to novel questions in evolutionary genomics and
+beyond.
+
+## References
