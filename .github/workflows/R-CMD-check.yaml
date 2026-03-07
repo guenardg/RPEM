@@ -42,8 +42,8 @@ jobs:
       - name: Install libraries for macOS
         if: runner.os == 'macOS'
         run: |
+          brew install udunits geos gdal gettext
           Rscript -e "install.packages('expm', repos = 'https://packagemanager.posit.co/cran/latest', type = 'binary')"
-          brew install udunits geos gdal
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
