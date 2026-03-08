@@ -233,24 +233,24 @@ void invDistWeightingC(int* n, double* a, double* d, double* w) {
       if(d[i] == 0.0)
         nz++;
       
-      if(nz) {
+    if(nz) {
         
-        tmp = 1.0/nz;
+      tmp = 1.0/nz;
         
-        for(i = 0; i < *n; i++)
-          w[i] = (d[i] == 0.0) ? tmp : 0.0;
+      for(i = 0; i < *n; i++)
+        w[i] = (d[i] == 0.0) ? tmp : 0.0;
         
-      } else {
-        
-        for(i = 0, tmp = 0.0; i < *n; i++) {
-          w[i] = R_pow(d[i], -(*a));
-          tmp += w[i];
-        }
-        
-        for(i = 0; i < *n; i++)
-          w[i] /= tmp;
+    } else {
+      
+      for(i = 0, tmp = 0.0; i < *n; i++) {
+        w[i] = R_pow(d[i], -(*a));
+        tmp += w[i];
       }
       
+      for(i = 0; i < *n; i++)
+        w[i] /= tmp;
+    }
+    
   }
   
   return;
