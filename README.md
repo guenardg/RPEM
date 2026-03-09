@@ -3,6 +3,7 @@
 <!-- Badges -->
 [![CRAN Status](https://www.r-pkg.org/badges/version/RPEM)](https://CRAN.R-project.org/package=RPEM)
 [![R-CMD-check](https://github.com/guenardg/pMEM/workflows/R-CMD-check/badge.svg)](https://github.com/guenardg/RPEM/actions)
+[![DOI](https://zenodo.org/badge/1174746393.svg)](https://doi.org/10.5281/zenodo.18917251)
 
 Modelling Phylogenetic Signals Using Eigenvector Maps
 
